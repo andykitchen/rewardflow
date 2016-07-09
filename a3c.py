@@ -19,37 +19,25 @@ import policy_value
 from policy_value import NatureAtariModel
 
 def one_hot(x, n):
-    v = np.zeros((len(x), n))
-    v[np.arange(v.shape[0]), x] = 1
+    v = np.zeros((len(x), n), dtype=np.float32)
+    v[np.arange(v.shape[0]), x] = 1.
     return v
 
-class AleThread(threading.Thread):
-	def __init__(self, sess, coord, rom_path, count_op, centralised_thingy):
-		super(AleThread, self).__init__()
+class Environment(object):
+	pass
+
+class StandardAleEnvironment(Environment):
+	def __init__(self, rom_path, frame_skip=4, clip_rewards=True):
+		super(Environment, self).__init__()
 		self.ale = ale_python_interface.ALEInterface()
 		self.ale.loadROM(rom_path)
-		self.minimal_actions = self.ale.getMinimalActionSet()
 
-		self.sess = sess
-		self.coord = coord
-		self.count_op = count_op
+		self.frame_skip = frame_skip
+		self.clip_rewards = clip_rewards
 
-		self.smallT = 0
+		self.minimal_action_set = self.ale.getMinimalActionSet()
+		self.total_reward = 0
 
-		self.centralised_thingy = centralised_thingy
-
-		self.policy_value_approx = NatureAtariModel()
-		self.copy_params_op = centralised_thingy.build_copy_op(self.policy_value_approx)
-		self.update_op, self.actions_tensor, self.bigR_tensor = centralised_thingy.build_update_op(self.policy_value_approx)
-
-		self.start_new_episode()
-
-	def run(self):
-		with coord.stop_on_exception():
-			while not self.coord.should_stop():
-				with self.sess.as_default():
-					self.step()
-	
 	def get_state(self):
 		frame = self.ale.getScreenGrayscale()
 		frame_small = scipy.misc.imresize(frame[:,:,0], (83, 83), interp='bilinear')
@@ -62,24 +50,53 @@ class AleThread(threading.Thread):
 		self.total_reward = 0
 		self.ale.reset_game()
 
+	def act(self, action):
+		ale_action = self.minimal_action_set[action]
+
+		for i in range(self.frame_skip):
+			reward = self.ale.act(ale_action)
+
+		if self.clip_rewards:
+			return np.clip(reward, -1, 1)
+		else:
+			return reward
+
+
+class TrainingThread(threading.Thread):
+	def __init__(self, sess, coord, env, count_op, centralised_thingy):
+		super(TrainingThread, self).__init__()
+		self.sess = sess
+		self.coord = coord
+		self.env = env
+		self.count_op = count_op
+
+		self.smallT = 0
+
+		self.centralised_thingy = centralised_thingy
+
+		self.policy_value_approx = NatureAtariModel()
+		self.copy_params_op = centralised_thingy.build_copy_op(self.policy_value_approx)
+		self.update_op, self.actions_tensor, self.bigR_tensor = centralised_thingy.build_update_op(self.policy_value_approx)
+
+
+	def run(self):
+		with coord.stop_on_exception():
+			while not self.coord.should_stop():
+				with self.sess.as_default():
+					self.step()
+	
 	def sample_policy(self):
-		state = self.get_state()
+		state = self.env.get_state()
 		action = self.policy_value_approx.sample(state)
 		return action
 
 	def current_value(self):
-		state = self.get_state()
+		state = self.env.get_state()
 		_, value = self.policy_value_approx.eval(state)
 		return value
 
-	def act(self, action):
-		ale_action = self.minimal_actions[action]
-		for i in range(4):
-			reward = self.ale.act(ale_action)
-		return reward
-
 	def compute_value(self):
-		state = self.get_state()
+		state = self.env.get_state()
 		action = self.policy_value_approx.sample(state)
 
 	def synchronize_params(self):		
@@ -132,7 +149,7 @@ class AleThread(threading.Thread):
 		})
 
 		if terminated:
-			print "total reward:", self.total_reward
+			print "episode reward:", self.total_reward
 			self.start_new_episode()
 
 
@@ -146,9 +163,13 @@ shared_model = NatureAtariModel()
 shared_optimizer = tf.train.RMSPropOptimizer(learning_rate, epsilon=0.1, decay=0.99)
 centralized_thingy = policy_value.CentralizedThingy(shared_optimizer, shared_model)
 
+def build_training_thread(sess):
+	env = StandardAleEnvironment(rom_path)
+	return TrainingThread(sess, coord, env, count_op, centralized_thingy)
+
 with tf.Session() as sess:
 	coord = tf.train.Coordinator()
-	threads = [AleThread(sess, coord, rom_path, count_op, centralized_thingy) for i in range(3)]
+	threads = [build_training_thread(sess) for i in range(3)]
 	tf.initialize_all_variables().run()
 	for t in threads:
 		t.start()
