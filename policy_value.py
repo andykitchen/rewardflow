@@ -89,7 +89,6 @@ def build_a3c_update(opt, params, state, pi, value, actions, bigR):
 	# value: value tensor
 	# actions: actual actions taken
 	# bigR: total discounted reward up to now from the mini-episode
-	
 	pi_sa    = tf.reduce_sum(pi * actions, 1) # actions is one hot of action chosen
 	pi_sa_lp = tf.log(pi_sa)
 
@@ -105,7 +104,34 @@ def build_a3c_update(opt, params, state, pi, value, actions, bigR):
 	return step
 
 
+class CentralizedThingy(object):
+	def __init__(self, shared_optimizer, shared_model):
+		self.shared_optimizer = shared_optimizer
+		self.shared_model = shared_model
 
+	def build_copy_op(self, model):
+		shared_params = self.shared_model.params
+		copy_ops = [tf.assign(local, shared) for local, shared in zip(model.params, shared_params)]
+		copy_op  = tf.group(*copy_ops)
+		return copy_op
+
+	def build_update_op(self, model):
+		actions = tf.placeholder(tf.float32, [None, 6])
+		bigR = tf.placeholder(tf.float32, [None, 1])
+
+		step = build_a3c_update(
+			self.shared_optimizer,
+			model.params,
+			model.state_input,
+			model.action_pr_tensor,
+			model.value_tensor,
+			actions,
+			bigR)
+
+		grad_shared = [(grad, shared_var) for (grad, var), shared_var in zip(step, self.shared_model.params)]
+		update_op = self.shared_optimizer.apply_gradients(grad_shared)
+
+		return update_op, actions, bigR
 
 
 class NatureAtariModel(PolicyValueApproximation):
@@ -123,7 +149,7 @@ class NatureAtariModel(PolicyValueApproximation):
 		state_batch = state[newaxis, :, :, newaxis]
 		action_pr_batch, value_batch = sess.run([self.action_pr_tensor, self.value_tensor], feed_dict={self.state_input: state_batch})
 		action_pr = action_pr_batch[0]
-		value = value_batch[0]
+		value = value_batch[0, 0]
 		return action_pr, value
 
 	def sample(self, state):
