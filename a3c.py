@@ -89,33 +89,47 @@ import threading
 class AleThread(threading.Thread):
 	def __init__(self, sess, coord, rom_path, count_op, frame_var, state_input, action_out, local_params, shared_params):
 		super(AleThread, self).__init__()
-		self.sess = sess
-		self.coord = coord
 		self.ale = ale_python_interface.ALEInterface()
 		self.ale.loadROM(rom_path)
-		self.count_op = count_op
 		self.actions = self.ale.getMinimalActionSet()
-		self.frame_placeholder = tf.placeholder(dtype=tf.uint8, shape=(210, 160, 3))
-		self.assign_op = frame_var.assign(self.frame_placeholder)
+
+		self.sess = sess
+		self.coord = coord
+		self.count_op = count_op
 		self.state_input = state_input
 		self.action_out = action_out
 		self.local_params = local_params
 		self.shared_params = shared_params
 		self.copy_params_op = tf.group(*[tf.assign(local, shared) for local, shared in zip(local_params, shared_params)])
 
+		self.frame_placeholder = tf.placeholder(dtype=tf.uint8, shape=(210, 160, 3))
+		self.assign_op = frame_var.assign(self.frame_placeholder)
+
 	def run(self):
 		with coord.stop_on_exception():
 			while not self.coord.should_stop():
 				self.step()
 	
-	def step(self):
-		self.sess.run(self.copy_params_op)
+	def get_state(self):
 		frame = self.ale.getScreenGrayscale()
 		frame_small = scipy.misc.imresize(frame[:,:,0], (83, 83), interp='bilinear')
-		frame_small = frame_small[newaxis, :, :, newaxis]
-		action_pr = sess.run(self.action_out, feed_dict={self.state_input: frame_small})
-		action_pr = action_pr[0]
+		return frame_small		
+
+	def eval_policy(self):
+		self.sess.run(self.copy_params_op)
+		state = self.get_state()
+		state_batch = state[newaxis, :, :, newaxis]
+		action_pr_batch = sess.run(self.action_out, feed_dict={self.state_input: state_batch})
+		action_pr = action_pr_batch[0]
+		return action_pr
+
+	def sample_policy(self):
+		action_pr = self.eval_policy()
 		action = np.random.choice(self.actions, p=action_pr)
+		return action
+
+	def step(self):
+		action = self.sample_policy()
 		reward = self.ale.act(action)
 		frame = self.ale.getScreenRGB()
 		count, _ = self.sess.run([self.count_op, self.assign_op], feed_dict={self.frame_placeholder: frame})
