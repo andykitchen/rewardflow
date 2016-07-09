@@ -11,6 +11,7 @@ class PolicyValueApproximation(object):
 	def sample(self):
 		raise NotImplementedError
 
+
 def build_nature_atari_graph():
 	minibatch_size  = None
 	screen_height   = 83
@@ -40,8 +41,8 @@ def build_nature_atari_graph():
 
 	def build_conv_layer(params, input, in_channels, out_channels, stride, activation=tf.nn.relu, stddev=init_stddev):
 		weight_shape = [filter_height, filter_width, in_channels, out_channels]
-		weights      = tf.Variable(tf.truncated_normal(weight_shape, stddev=stddev))
-		bias         = tf.Variable(tf.zeros(out_channels))
+		weights      = tf.Variable(tf.truncated_normal(weight_shape, stddev=stddev), name='W')
+		bias         = tf.Variable(tf.zeros(out_channels), name='b')
 
 		params += [weights, bias]
 
@@ -52,8 +53,8 @@ def build_nature_atari_graph():
 		return relu_out
 
 	def build_fc_layer(params, input, n_in, n_out, activation=tf.nn.relu, stddev=init_stddev):
-		weights = tf.Variable(tf.truncated_normal([n_in, n_out], stddev=stddev))
-		bias    = tf.Variable(tf.zeros(n_out))
+		weights = tf.Variable(tf.truncated_normal([n_in, n_out], stddev=stddev), name='W')
+		bias    = tf.Variable(tf.zeros(n_out), name='b')
 
 		params += [weights, bias]
 
@@ -78,6 +79,34 @@ def build_nature_atari_graph():
 	value     = fc2b_out
 
 	return state, action_pr, value, params
+
+
+def build_a3c_update(opt, params, state, pi, value, actions, bigR):
+	# opt: shared optimizer
+	# params: parameters of our policy / value network
+	# state: minibatch of states
+	# pi: policy probability tensor
+	# value: value tensor
+	# actions: actual actions taken
+	# bigR: total discounted reward up to now from the mini-episode
+	
+	pi_sa    = tf.reduce_sum(pi * actions, 1) # actions is one hot of action chosen
+	pi_sa_lp = tf.log(pi_sa)
+
+	bigA = bigR - value
+	bigA_const = tf.stop_gradient(bigA) # advantage needs to be a constant in the first loss term
+
+	action_loss = pi_sa_lp*bigA_const
+	value_loss  = tf.square(bigA)
+
+	loss = action_loss + value_loss
+
+	step = opt.compute_gradients(loss, params)
+	return step
+
+
+
+
 
 class NatureAtariModel(PolicyValueApproximation):
 	def __init__(self):
