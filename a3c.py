@@ -87,7 +87,7 @@ from numpy import newaxis
 import threading
 
 class AleThread(threading.Thread):
-	def __init__(self, sess, coord, rom_path, count_op, frame_var, state_input, action_out, local_params, shared_params):
+	def __init__(self, sess, coord, rom_path, count_op, state_input, action_out, local_params, shared_params):
 		super(AleThread, self).__init__()
 		self.ale = ale_python_interface.ALEInterface()
 		self.ale.loadROM(rom_path)
@@ -102,9 +102,6 @@ class AleThread(threading.Thread):
 		self.shared_params = shared_params
 		self.copy_params_op = tf.group(*[tf.assign(local, shared) for local, shared in zip(local_params, shared_params)])
 
-		self.frame_placeholder = tf.placeholder(dtype=tf.uint8, shape=(210, 160, 3))
-		self.assign_op = frame_var.assign(self.frame_placeholder)
-
 	def run(self):
 		with coord.stop_on_exception():
 			while not self.coord.should_stop():
@@ -113,13 +110,19 @@ class AleThread(threading.Thread):
 	def get_state(self):
 		frame = self.ale.getScreenGrayscale()
 		frame_small = scipy.misc.imresize(frame[:,:,0], (83, 83), interp='bilinear')
-		return frame_small		
+		return frame_small
+
+	def terminal_state(self):
+		return self.ale.game_over()
+
+	def start_new_episode(self):
+		self.ale.reset_game()
 
 	def eval_policy(self):
 		self.sess.run(self.copy_params_op)
 		state = self.get_state()
 		state_batch = state[newaxis, :, :, newaxis]
-		action_pr_batch = sess.run(self.action_out, feed_dict={self.state_input: state_batch})
+		action_pr_batch = self.sess.run(self.action_out, feed_dict={self.state_input: state_batch})
 		action_pr = action_pr_batch[0]
 		return action_pr
 
@@ -131,23 +134,23 @@ class AleThread(threading.Thread):
 	def step(self):
 		action = self.sample_policy()
 		reward = self.ale.act(action)
-		frame = self.ale.getScreenRGB()
-		count, _ = self.sess.run([self.count_op, self.assign_op], feed_dict={self.frame_placeholder: frame})
+		count = self.sess.run(self.count_op)
+
 		if reward > 0:
 			print count, ":", reward
-
+		if self.terminal_state():
+			print count, ":", "end of episode"
+			self.start_new_episode()
 
 bigT = tf.Variable(0, dtype=tf.int64)
 count_op = bigT.assign_add(1)
-
-frame_var = tf.Variable(np.zeros((210, 160, 3)), dtype=tf.uint8, trainable=False)
 
 _, _, _, shared_params = build_graph()
 
 with tf.Session() as sess:
 	def build_actor_thread():
 		state, action_out, val_out, params = build_graph()
-		thread = AleThread(sess, coord, rom_path, count_op, frame_var, state, action_out, params, shared_params)
+		thread = AleThread(sess, coord, rom_path, count_op, state, action_out, params, shared_params)
 		return thread
 
 	coord = tf.train.Coordinator()
