@@ -16,7 +16,7 @@ def build_nature_atari_graph():
 	minibatch_size  = None
 	screen_height   = 83
 	screen_width    = 83
-	history_size    = 1
+	history_size    = 4
 	init_stddev     = 10e-4
 
 	filter_height   = 8
@@ -92,16 +92,24 @@ def build_a3c_update(opt, params, state, pi, value, actions, bigR):
 	pi_sa    = tf.reduce_sum(pi * actions, 1) # actions is one hot of action chosen
 	pi_sa_lp = tf.log(pi_sa)
 
+	value = tf.squeeze(value, squeeze_dims=[1])
 	bigA = bigR - value
 	bigA_const = tf.stop_gradient(bigA) # advantage needs to be a constant in the first loss term
 
-	action_loss = pi_sa_lp*bigA_const
-	value_loss  = tf.square(bigA)
+	pi_loss      = -pi_sa_lp*bigA_const
+	value_loss   = tf.square(bigA)
+	entropy_loss = -tf.reduce_sum(pi*tf.log(pi), 1)
 
-	loss = action_loss + value_loss
+	beta0 = 0.5
+	beta1 = 0.01
 
-	step = opt.compute_gradients(loss, params)
-	return step
+	loss = pi_loss + beta0*value_loss + beta1*entropy_loss
+	assert loss.get_shape().ndims == 1
+
+	batch_loss = tf.reduce_mean(loss)
+
+	step = opt.compute_gradients(batch_loss, params)
+	return step, loss
 
 
 class CentralizedThingy(object):
@@ -117,9 +125,9 @@ class CentralizedThingy(object):
 
 	def build_update_op(self, model):
 		actions = tf.placeholder(tf.float32, [None, 6])
-		bigR = tf.placeholder(tf.float32, [None, 1])
+		bigR = tf.placeholder(tf.float32, [None])
 
-		step = build_a3c_update(
+		step, loss = build_a3c_update(
 			self.shared_optimizer,
 			model.params,
 			model.state_input,
@@ -134,9 +142,9 @@ class CentralizedThingy(object):
 		return update_op, actions, bigR
 
 
-class NatureAtariModel(PolicyValueApproximation):
+class AtariNatureModel(PolicyValueApproximation):
 	def __init__(self):
-		super(NatureAtariModel, self).__init__()
+		super(AtariNatureModel, self).__init__()
 		state_input, action_pr_tensor, value_tensor, params = build_nature_atari_graph()
 		self.state_input = state_input
 		self.action_pr_tensor = action_pr_tensor
@@ -144,15 +152,23 @@ class NatureAtariModel(PolicyValueApproximation):
 		self.action_indices = np.arange(action_pr_tensor.get_shape()[-1].value)
 		self.params = params
 
-	def eval(self, state):
+	def eval_policy(self, state):
 		sess = tf.get_default_session()
-		state_batch = state[newaxis, :, :, newaxis]
-		action_pr_batch, value_batch = sess.run([self.action_pr_tensor, self.value_tensor], feed_dict={self.state_input: state_batch})
+		state_batch = state[newaxis, :, :]
+		action_pr_batch = sess.run(self.action_pr_tensor,
+			feed_dict={self.state_input: state_batch})
 		action_pr = action_pr_batch[0]
-		value = value_batch[0, 0]
-		return action_pr, value
+		return action_pr
 
-	def sample(self, state):
-		action_pr, value = self.eval(state)
+	def eval_value(self, state):
+		sess = tf.get_default_session()
+		state_batch = state[newaxis, :, :]
+		value_batch = sess.run(self.value_tensor,
+			feed_dict={self.state_input: state_batch})
+		value = value_batch[0, 0]
+		return value
+
+	def sample_policy(self, state):
+		action_pr = self.eval_policy(state)
 		action = np.random.choice(self.action_indices, p=action_pr)
 		return action
