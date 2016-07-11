@@ -44,7 +44,7 @@ class AleEnvironment(object):
 
 	def get_ale_state(self):
 		frame       = self.ale.getScreenGrayscale()
-		frame_small = scipy.misc.imresize(frame[:,:,0], (83, 83), interp='bilinear')
+		frame_small = scipy.misc.imresize(frame[:,:,0], (84, 84), interp='bilinear')
 		frame_norm  = frame_small / 255.
 		return frame_norm
 

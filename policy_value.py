@@ -12,26 +12,21 @@ class PolicyValueApproximation(object):
 		raise NotImplementedError
 
 
-def build_nips_atari_graph(history_size=4):
+def build_nips_atari_graph():
 	minibatch_size  = None
-	screen_height   = 83
-	screen_width    = 83
-	history_size    = history_size
+	screen_height   = 84
+	screen_width    = 84
+	history_size    = 4
 	init_stddev     = 10e-4
 
-	filter_height   = 8
-	filter_width    = 8
+	conv1_size      = (8, 8)
 	conv1_features  = 16
 	conv1_stride    = 4
-	conv1_height    = (screen_height + conv1_stride) // conv1_stride
-	conv1_width     = (screen_width  + conv1_stride) // conv1_stride
 
+	conv2_size      = (4, 4)
 	conv2_features  = 32
 	conv2_stride    = 2
-	conv2_height    = (conv1_height + conv2_stride) // conv2_stride
-	conv2_width     = (conv1_width  + conv2_stride) // conv2_stride
 
-	conv2_flat_size = conv2_height * conv2_width * conv2_features
 	fc1_features    = 256
 	fc2a_features   = 6
 	fc2b_features   = 1
@@ -39,41 +34,48 @@ def build_nips_atari_graph(history_size=4):
 	state = tf.placeholder(tf.float32, [minibatch_size, screen_width, screen_height, history_size])
 	params = []
 
-	def build_conv_layer(params, input, in_channels, out_channels, stride, activation=tf.nn.relu, stddev=init_stddev):
-		weight_shape = [filter_height, filter_width, in_channels, out_channels]
-		weights      = tf.Variable(tf.truncated_normal(weight_shape, stddev=stddev), name='W')
-		bias         = tf.Variable(tf.zeros(out_channels), name='b')
+	def build_conv_layer(params, input, filter_size, in_channels, out_channels, stride, activation=tf.nn.relu, stddev=init_stddev, scope='conv'):
+		with tf.variable_scope(scope):
+			filter_height, filter_width = filter_size
+			weight_shape = [filter_height, filter_width, in_channels, out_channels]
+			weights      = tf.Variable(tf.truncated_normal(weight_shape, stddev=stddev), name='W')
+			bias         = tf.Variable(tf.zeros(out_channels), name='b')
 
-		params += [weights, bias]
+			params += [weights, bias]
 
-		conv_out = tf.nn.conv2d(input, weights, [1, stride, stride, 1], padding='SAME')
-		bias_out = tf.nn.bias_add(conv_out, bias)
-		relu_out = tf.nn.relu(bias_out)
+			conv_out = tf.nn.conv2d(input, weights, [1, stride, stride, 1], padding='VALID')
+			bias_out = tf.nn.bias_add(conv_out, bias)
+			relu_out = tf.nn.relu(bias_out)
 
 		return relu_out
 
-	def build_fc_layer(params, input, n_in, n_out, activation=tf.nn.relu, stddev=init_stddev):
-		weights = tf.Variable(tf.truncated_normal([n_in, n_out], stddev=stddev), name='W')
-		bias    = tf.Variable(tf.zeros(n_out), name='b')
+	def build_fc_layer(params, input, n_in, n_out, activation=tf.nn.relu, stddev=init_stddev, scope='fc'):
+		with tf.variable_scope(scope):
+			weights = tf.Variable(tf.truncated_normal([n_in, n_out], stddev=stddev), name='W')
+			bias    = tf.Variable(tf.zeros(n_out), name='b')
 
-		params += [weights, bias]
+			params += [weights, bias]
 
-		matmul_out = tf.matmul(input, weights)
-		bias_out   = tf.nn.bias_add(matmul_out, bias)
+			matmul_out = tf.matmul(input, weights)
+			bias_out   = tf.nn.bias_add(matmul_out, bias)
 
-		if activation:
-			output = activation(bias_out)
-		else:
-			output = bias_out
+			if activation:
+				output = activation(bias_out)
+			else:
+				output = bias_out
 
 		return output
 
-	conv1_out  = build_conv_layer(params, state, history_size, conv1_features, conv1_stride)
-	conv2_out  = build_conv_layer(params, conv1_out, conv1_features, conv2_features, conv2_stride)
-	conv2_flat = tf.reshape(conv2_out, [-1, conv2_flat_size])
-	fc1_out    = build_fc_layer(params, conv2_flat, conv2_flat_size, fc1_features)
-	fc2a_out   = build_fc_layer(params, fc1_out, fc1_features, fc2a_features, activation=tf.nn.softmax)
-	fc2b_out   = build_fc_layer(params, fc1_out, fc1_features, fc2b_features, activation=None)
+	with tf.variable_scope('q_network'):
+		conv1_out  = build_conv_layer(params, state, conv1_size, history_size, conv1_features, conv1_stride, scope='conv1')
+		conv2_out  = build_conv_layer(params, conv1_out, conv2_size, conv1_features, conv2_features, conv2_stride, scope='conv2')
+
+		conv2_flat_size = np.product(conv2_out.get_shape().as_list()[1:])
+
+		conv2_flat = tf.reshape(conv2_out, [-1, conv2_flat_size])
+		fc1_out    = build_fc_layer(params, conv2_flat, conv2_flat_size, fc1_features, scope='fc1')
+		fc2a_out   = build_fc_layer(params, fc1_out, fc1_features, fc2a_features, activation=tf.nn.softmax, scope='fc2a')
+		fc2b_out   = build_fc_layer(params, fc1_out, fc1_features, fc2b_features, activation=None, scope='fc2b')
 
 	action_pr = fc2a_out
 	value     = fc2b_out
@@ -143,9 +145,9 @@ class CentralizedThingy(object):
 
 
 class AtariNIPSModel(PolicyValueApproximation):
-	def __init__(self, history_size=4):
+	def __init__(self):
 		super(AtariNIPSModel, self).__init__()
-		state_input, action_pr_tensor, value_tensor, params = build_nips_atari_graph(history_size)
+		state_input, action_pr_tensor, value_tensor, params = build_nips_atari_graph()
 		self.state_input = state_input
 		self.action_pr_tensor = action_pr_tensor
 		self.value_tensor = value_tensor

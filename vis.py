@@ -13,8 +13,10 @@ import tensorflow as tf
 import time
 import random
 import threading
+import collections
+import cv2
 
-import policy_value
+import deepq_loader
 
 rom_path = 'space_invaders.bin'
 
@@ -83,36 +85,53 @@ class AleCompute(QtCore.QObject):
 		self.timer.setSingleShot(True)
 		self.timer.timeout.connect(self.step)
 
+		history_size = 4
+		self.history = collections.deque(maxlen=history_size)
+		for i in range(4):
+			self.history.append(np.zeros((84, 84)))
+
 		self.sess = tf.Session()
 		with self.sess.as_default():
-			self.model = policy_value.AtariNIPSModel(history_size=1)
+			self.model = deepq_loader.AtariNIPSDeepQModel()
+			self.saver = tf.train.Saver()
 			self.sess.run(tf.initialize_all_variables())
+			self.saver.restore(self.sess, 'pretrained_model.ckpt')
 
 		self.step()
 
 	@QtCore.pyqtSlot()
 	def step(self):
 		start = time.clock()
-		self.step_ale()
+
 		with self.sess.as_default():
-			action_pr = self.model.eval_policy(self.get_ale_state())
+			state_action_values = self.model.eval(self.get_ale_state())
+			action_index = np.argmax(state_action_values)
+		self.step_ale(action_index)
+
 		finish = time.clock()
 		elapsed = finish - start
 		target = 1./60
 		delay = target - elapsed if elapsed < target else 0
 		self.timer.start(1000 * delay)
 
-	def step_ale(self):
-		self.ale.act(random.choice(self.actions))
+	def step_ale(self, action_index):
+		self.ale.act(self.actions[action_index])
+		# self.ale.act(random.choice(self.actions))
 		frame = self.ale.getScreenRGB()
 		qimage = np_rgb_to_qimage(frame).copy()
 		self.frame.emit(qimage)
 
 	def get_ale_state(self):
 		frame       = self.ale.getScreenGrayscale()
-		frame_small = scipy.misc.imresize(frame[:,:,0], (83, 83), interp='bilinear')
+		# frame_small = scipy.misc.imresize(frame[:,:,0], (84, 84), interp='bilinear')
+		frame_small = cv2.resize(frame, (84, 84), interpolation=cv2.INTER_LINEAR)
+
 		frame_norm  = frame_small / 255.
-		return frame_norm[:,:,np.newaxis]
+		self.history.append(frame_norm)
+		# return frame_norm[:,:,np.newaxis]
+		# return np.tile(frame_norm[:,:,np.newaxis], (1, 1, 4))
+		state = np.array(self.history).transpose(1, 2, 0)
+		return state
 
 
 def setup_ale_thread():
