@@ -8,6 +8,7 @@ import ale_python_interface
 
 import numpy as np
 import scipy.misc
+import scipy.ndimage
 import tensorflow as tf
 
 import time
@@ -26,7 +27,7 @@ ale_channels = 3
 
 
 def np_rgb_to_qimage(x):
-	qimage = QtGui.QImage(x.data, x.shape[1], x.shape[0], QtGui.QImage.Format_RGB888)
+	qimage = QtGui.QImage(x.astype(np.uint8).data, x.shape[1], x.shape[0], QtGui.QImage.Format_RGB888)
 	return qimage
 
 
@@ -51,11 +52,13 @@ class AleGraphicsItem(QtGui.QGraphicsItem):
 
 
 class NeuralLayerGraphicsItem(QtGui.QGraphicsItem):
-	def __init__(self, rows, cols, cell_size):
+	def __init__(self, rows, cols, cell_size, scale=127):
 		super(NeuralLayerGraphicsItem, self).__init__()
 		self.rows = rows
 		self.cols = cols
 		self.cell_size = cell_size
+		self.scale = scale
+		self.activity_array = np.zeros((self.rows, self.cols))
 
 	def boundingRect(self):
 		return QtCore.QRectF(0, 0, self.cols * self.cell_size, self.rows * self.cell_size)
@@ -66,12 +69,72 @@ class NeuralLayerGraphicsItem(QtGui.QGraphicsItem):
 		cell_size = self.cell_size
 		for i in range(self.rows):
 			for j in range(self.cols):
-				qcolor = QtGui.QColor(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+				z = np.clip(self.scale*self.activity_array[i, j], 0, 255)
+				r = z; b = z; g = z
+				qcolor = QtGui.QColor(r, g, b)
 				painter.fillRect(j*cell_size, i*cell_size, cell_size, cell_size, qcolor)
+
+	@QtCore.pyqtSlot()
+	def show_activity(self, activity_array):
+		self.update()
+		self.activity_array = activity_array.reshape(self.rows, self.cols)
+
+def as_grid(x, r, c, pad=2, pad_value=0):
+    x = np.lib.pad(x, ((pad,pad), (pad,pad), (0,0)), 'constant', constant_values=pad_value)
+    ir, ic, n = x.shape
+    x = x.reshape(ir, ic, r, c).transpose(2,0,3,1).reshape(r*ir, c*ic)
+    x = np.lib.pad(x, pad, 'constant', constant_values=pad_value)
+    return x
+
+def to_rgb(x):
+	return np.tile(x[:,:,np.newaxis],(1,1,3))
+
+def zoom_int(x, n):
+	x = np.repeat(x, n, axis=0)
+	x = np.repeat(x, n, axis=1)
+	return x
+
+class ConvLayerGraphicsItem(QtGui.QGraphicsItem):
+	def __init__(self, rows, cols, cell_rows, cell_cols, pad=2):
+		super(ConvLayerGraphicsItem, self).__init__()
+		self.rows = rows
+		self.cols = cols
+		self.pad = pad
+		self.cell_rows = cell_rows
+		self.cell_cols = cell_cols
+		self.activity_image = None
+		self.show_conv_activity(np.ones((cell_rows, cell_cols, rows*cols)))
+		self.scale=1
+
+	def boundingRect(self):
+		# if activity_image is None:
+		# 	return QtCore.QRectF(0, 0, 0, 0)
+		# else:
+		return QtCore.QRectF(0, 0, self.scale*self.activity_image.width(), self.scale*self.activity_image.height())
+
+	def paint(self, painter, option, widget):
+		# if activity_image is None:
+		# 	painter.fillRect(0, 0, ale_screen_width, ale_screen_height, QtCore.Qt.gray)
+		# else:
+		painter.drawImage(QtCore.QRectF(0, 0, self.scale*self.activity_image.width(), self.scale*self.activity_image.height()), self.activity_image)
+
+	def show_conv_activity(self, activity_array):
+		self.update()
+		im = 127*activity_array
+		im = im.astype(np.uint8)
+		im = zoom_int(im, 4)
+		im = as_grid(im, self.rows, self.cols, pad=self.pad, pad_value=127)
+		# im = scipy.misc.imresize(im, 400, interp='nearest')
+		im_rgb = to_rgb(im)
+		qimage = np_rgb_to_qimage(im_rgb)
+		self.activity_image = qimage
 
 
 class AleCompute(QtCore.QObject):
 	frame = QtCore.pyqtSignal(QtGui.QImage)
+	final_layer_activity = QtCore.pyqtSignal(np.ndarray)
+	conv1_activity = QtCore.pyqtSignal(np.ndarray)
+	conv2_activity = QtCore.pyqtSignal(np.ndarray)
 
 	def __init__(self, rom_path):
 		super(AleCompute, self).__init__()
@@ -104,9 +167,14 @@ class AleCompute(QtCore.QObject):
 		start = time.clock()
 
 		with self.sess.as_default():
-			state_action_values = self.model.eval(self.get_ale_state())
+			activity = self.model.eval_activity(self.get_ale_state())
+			state_action_values = activity[-1]
 			action_index = np.argmax(state_action_values)
 		self.step_ale(action_index)
+
+		self.conv1_activity.emit(activity[0])
+		self.conv2_activity.emit(activity[1])
+		self.final_layer_activity.emit(activity[-2])
 
 		finish = time.clock()
 		elapsed = finish - start
@@ -123,7 +191,7 @@ class AleCompute(QtCore.QObject):
 
 	def get_ale_state(self):
 		frame       = self.ale.getScreenGrayscale()
-		# frame_small = scipy.misc.imresize(frame[:,:,0], (84, 84), interp='bilinear')
+		# frame_small = scipy.misc.imresize(frame[:,:,0], (84, 84), interp='bilinear', mode='F')
 		frame_small = cv2.resize(frame, (84, 84), interpolation=cv2.INTER_LINEAR)
 
 		frame_norm  = frame_small / 255.
@@ -137,13 +205,19 @@ class AleCompute(QtCore.QObject):
 def setup_ale_thread():
 	thread = QtCore.QThread()
 	compute = AleCompute(rom_path)
-	ale_graphics_item = AleGraphicsItem()
+	ale_gi = AleGraphicsItem()
+	nl_gi = NeuralLayerGraphicsItem(32, 16, 10)
+	cl_gi1 = ConvLayerGraphicsItem(4, 8, 20, 20, pad=2)
+	cl_gi2 = ConvLayerGraphicsItem(4, 16, 9, 9, pad=2)
 
 	compute.moveToThread(thread)
-	compute.frame.connect(ale_graphics_item.show_frame)
+	compute.frame.connect(ale_gi.show_frame)
+	compute.final_layer_activity.connect(nl_gi.show_activity)
+	compute.conv1_activity.connect(cl_gi1.show_conv_activity)
+	compute.conv2_activity.connect(cl_gi2.show_conv_activity)
 	thread.started.connect(compute.run)
 
-	return thread, ale_graphics_item, compute
+	return thread, compute, ale_gi, nl_gi, cl_gi1, cl_gi2
 
 
 if __name__ == '__main__':
@@ -155,20 +229,17 @@ if __name__ == '__main__':
 	view.setViewport(glwidget)
 	view.setViewportUpdateMode(QtGui.QGraphicsView.FullViewportUpdate)
 
-	thread, ale_graphics_item, compute = setup_ale_thread()
-	scene.addItem(ale_graphics_item)
+	thread, compute, ale_gi, nl_gi, cl_gi1, cl_gi2 = setup_ale_thread()
+	scene.addItem(ale_gi)
 
-	for n in range(5):
-		nlgi = NeuralLayerGraphicsItem(16, 16, 10)
-		scene.addItem(nlgi)
-		nlgi.setPos(200 + n*180, 0)
-		compute.frame.connect(nlgi.update)
+	scene.addItem(nl_gi)
+	nl_gi.setPos(0, 250)
 
-	for n in range(10):
-		agi = AleGraphicsItem()
-		scene.addItem(agi)
-		agi.setPos(n*ale_screen_width, 250)
-		compute.frame.connect(agi.show_frame)
+	scene.addItem(cl_gi1)
+	cl_gi1.setPos(200, 0)
+
+	scene.addItem(cl_gi2)
+	cl_gi2.setPos(250, 250)
 
 	view.show()
 	thread.start()
