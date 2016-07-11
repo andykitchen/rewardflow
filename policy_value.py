@@ -12,11 +12,11 @@ class PolicyValueApproximation(object):
 		raise NotImplementedError
 
 
-def build_nature_atari_graph():
+def build_nips_atari_graph(history_size=4):
 	minibatch_size  = None
 	screen_height   = 83
 	screen_width    = 83
-	history_size    = 4
+	history_size    = history_size
 	init_stddev     = 10e-4
 
 	filter_height   = 8
@@ -142,10 +142,10 @@ class CentralizedThingy(object):
 		return update_op, actions, bigR
 
 
-class AtariNatureModel(PolicyValueApproximation):
-	def __init__(self):
-		super(AtariNatureModel, self).__init__()
-		state_input, action_pr_tensor, value_tensor, params = build_nature_atari_graph()
+class AtariNIPSModel(PolicyValueApproximation):
+	def __init__(self, history_size=4):
+		super(AtariNIPSModel, self).__init__()
+		state_input, action_pr_tensor, value_tensor, params = build_nips_atari_graph(history_size)
 		self.state_input = state_input
 		self.action_pr_tensor = action_pr_tensor
 		self.value_tensor = value_tensor

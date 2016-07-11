@@ -15,7 +15,7 @@ import threading
 import collections
 
 import policy_value
-from policy_value import AtariNatureModel
+from policy_value import AtariNIPSModel
 
 
 def one_hot(x, n):
@@ -169,13 +169,13 @@ if __name__ == "__main__":
 	bigT = tf.Variable(0, dtype=tf.int64)
 	count_op = bigT.assign_add(1)
 
-	shared_model = AtariNatureModel()
+	shared_model = AtariNIPSModel()
 	shared_optimizer = tf.train.RMSPropOptimizer(learning_rate, epsilon=0.1, decay=0.99)
 	centralized_thingy = policy_value.CentralizedThingy(shared_optimizer, shared_model)
 
 	def build_training_thread(sess):
 		env = AleEnvironment(rom_path)
-		policy_value_approx = AtariNatureModel()
+		policy_value_approx = AtariNIPSModel()
 		return TrainingThread(sess, coord, env, policy_value_approx, count_op, centralized_thingy)
 
 	with tf.Session() as sess:
