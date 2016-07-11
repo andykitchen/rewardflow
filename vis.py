@@ -86,13 +86,9 @@ class AleCompute(QtCore.QObject):
 		self.timer.timeout.connect(self.step)
 
 		history_size = 4
-		screen_size = 84
 		self.history = collections.deque(maxlen=history_size)
 		for i in range(4):
-			self.history.append(np.zeros((screen_size, screen_size)))
-
-		self.elapsed_frames = 0
-		self.last_action_index = 0
+			self.history.append(np.zeros((84, 84)))
 
 		self.sess = tf.Session()
 		with self.sess.as_default():
@@ -107,14 +103,9 @@ class AleCompute(QtCore.QObject):
 	def step(self):
 		start = time.clock()
 
-		if elapsed_frames % 4 == 0:
-			with self.sess.as_default():
-				state_action_values = self.model.eval(self.get_ale_state())
-				action_index = np.argmax(state_action_values)
-				self.last_action_index = action_index
-		else:
-			self.last_action_index = 0
-
+		with self.sess.as_default():
+			state_action_values = self.model.eval(self.get_ale_state())
+			action_index = np.argmax(state_action_values)
 		self.step_ale(action_index)
 
 		finish = time.clock()
@@ -132,8 +123,8 @@ class AleCompute(QtCore.QObject):
 
 	def get_ale_state(self):
 		frame       = self.ale.getScreenGrayscale()
-		frame_small = scipy.misc.imresize(frame[:,:,0], (84, 84), interp='bilinear')
-		# frame_small = cv2.resize(frame, (84, 84), interpolation=cv2.INTER_LINEAR)
+		# frame_small = scipy.misc.imresize(frame[:,:,0], (84, 84), interp='bilinear')
+		frame_small = cv2.resize(frame, (84, 84), interpolation=cv2.INTER_LINEAR)
 
 		frame_norm  = frame_small / 255.
 		self.history.append(frame_norm)
