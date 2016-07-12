@@ -25,11 +25,9 @@ ale_screen_height = 210
 ale_screen_width = 160
 ale_channels = 3
 
-
 def np_rgb_to_qimage(x):
 	qimage = QtGui.QImage(x.astype(np.uint8).data, x.shape[1], x.shape[0], QtGui.QImage.Format_RGB888)
 	return qimage
-
 
 class AleGraphicsItem(QtGui.QGraphicsItem):
 	def __init__(self):
@@ -64,35 +62,74 @@ class NeuralLayerGraphicsItem(QtGui.QGraphicsItem):
 		return QtCore.QRectF(0, 0, self.cols * self.cell_size, self.rows * self.cell_size)
 
 	def paint(self, painter, option, widget):
-		# painter.fillRect(0, 0, self.cols * self.cell_size, self.rows * self.cell_size, QtCore.Qt.gray)
+		painter.fillRect(0, 0, self.cols * self.cell_size, self.rows * self.cell_size, QtCore.Qt.gray)
 		
-		cell_size = self.cell_size
-		for i in range(self.rows):
-			for j in range(self.cols):
-				z = np.clip(self.scale*self.activity_array[i, j], 0, 255)
-				r = z; b = z; g = z
-				qcolor = QtGui.QColor(r, g, b)
-				painter.fillRect(j*cell_size, i*cell_size, cell_size, cell_size, qcolor)
+		# cell_size = self.cell_size
+		# for i in range(self.rows):
+		# 	for j in range(self.cols):
+		# 		z = np.clip(self.scale*self.activity_array[i, j], 0, 255)
+		# 		r = z; b = z; g = z
+		# 		qcolor = QtGui.QColor(r, g, b)
+		# 		painter.fillRect(j*cell_size, i*cell_size, cell_size, cell_size, qcolor)
 
 	@QtCore.pyqtSlot()
 	def show_activity(self, activity_array):
 		self.update()
 		self.activity_array = activity_array.reshape(self.rows, self.cols)
 
+
 def as_grid(x, r, c, pad=2, pad_value=0):
     x = np.lib.pad(x, ((pad,pad), (pad,pad), (0,0)), 'constant', constant_values=pad_value)
     ir, ic, n = x.shape
     x = x.reshape(ir, ic, r, c).transpose(2,0,3,1).reshape(r*ir, c*ic)
-    x = np.lib.pad(x, pad, 'constant', constant_values=pad_value)
+    # x = np.lib.pad(x, pad, 'constant', constant_values=pad_value)
     return x
 
 def to_rgb(x):
 	return np.tile(x[:,:,np.newaxis],(1,1,3))
 
+def to_rgb32(x):
+	return np.tile(x[:,:,np.newaxis],(1,1,4))
+
+def np_rgb32_to_qimage(x):
+	qimage = QtGui.QImage(x.astype(np.uint8).data, x.shape[1], x.shape[0], QtGui.QImage.Format_RGB32)
+	return qimage
+
 def zoom_int(x, n):
 	x = np.repeat(x, n, axis=0)
 	x = np.repeat(x, n, axis=1)
 	return x
+
+
+def conv_activity_to_qimage(activity_array, rows, cols, pad, pad_value=127):
+	im = 127*activity_array
+	im = im.astype(np.uint8)
+	im = zoom_int(im, 4)
+	im = as_grid(im, rows, cols, pad=pad, pad_value=pad_value)
+	# im = scipy.misc.imresize(im, 400, interp='nearest')
+	im_rgb = to_rgb32(im)
+	qimage = np_rgb32_to_qimage(im_rgb)
+	return qimage
+
+
+class RenderConvActivitySignale(QtCore.QObject):
+	image = QtCore.pyqtSignal(QtGui.QImage)
+
+class RenderConvActivityRunnable(QtCore.QRunnable):
+	def __init__(self, activity_array, rows, cols, pad):
+		super(RenderConvActivityRunnable, self).__init__()
+		self.rows = rows
+		self.cols = cols
+		self.pad = pad
+		self.activity_array = activity_array
+		self.signals = RenderConvActivitySignale()
+
+	def run(self):
+		activity_image = conv_activity_to_qimage(
+			self.activity_array,
+			self.rows, self.cols, self.pad)
+		self.signals.image.emit(activity_image.copy())
+
 
 class ConvLayerGraphicsItem(QtGui.QGraphicsItem):
 	def __init__(self, rows, cols, cell_rows, cell_cols, pad=2):
@@ -102,32 +139,27 @@ class ConvLayerGraphicsItem(QtGui.QGraphicsItem):
 		self.pad = pad
 		self.cell_rows = cell_rows
 		self.cell_cols = cell_cols
-		self.activity_image = None
-		self.show_conv_activity(np.ones((cell_rows, cell_cols, rows*cols)))
-		self.scale=1
+		no_activity = np.zeros((cell_rows, cell_cols, rows*cols))
+		self.activity_image = conv_activity_to_qimage(
+			no_activity,
+			rows, cols, pad)
 
 	def boundingRect(self):
-		# if activity_image is None:
-		# 	return QtCore.QRectF(0, 0, 0, 0)
-		# else:
-		return QtCore.QRectF(0, 0, self.scale*self.activity_image.width(), self.scale*self.activity_image.height())
+		return QtCore.QRectF(0, 0, self.activity_image.width(), self.activity_image.height())
 
 	def paint(self, painter, option, widget):
-		# if activity_image is None:
-		# 	painter.fillRect(0, 0, ale_screen_width, ale_screen_height, QtCore.Qt.gray)
-		# else:
-		painter.drawImage(QtCore.QRectF(0, 0, self.scale*self.activity_image.width(), self.scale*self.activity_image.height()), self.activity_image)
+		painter.drawImage(0, 0, self.activity_image)
 
-	def show_conv_activity(self, activity_array):
+	@QtCore.pyqtSlot()
+	def show_image(self, activity_image):
 		self.update()
-		im = 127*activity_array
-		im = im.astype(np.uint8)
-		im = zoom_int(im, 4)
-		im = as_grid(im, self.rows, self.cols, pad=self.pad, pad_value=127)
-		# im = scipy.misc.imresize(im, 400, interp='nearest')
-		im_rgb = to_rgb(im)
-		qimage = np_rgb_to_qimage(im_rgb)
-		self.activity_image = qimage
+		self.activity_image = activity_image
+
+	@QtCore.pyqtSlot()
+	def show_conv_activity(self, activity_array):
+		runnable = RenderConvActivityRunnable(activity_array, self.rows, self.cols, self.pad)
+		runnable.signals.image.connect(self.show_image)
+		QtCore.QThreadPool.globalInstance().start(runnable)
 
 
 class AleCompute(QtCore.QObject):
@@ -135,6 +167,7 @@ class AleCompute(QtCore.QObject):
 	final_layer_activity = QtCore.pyqtSignal(np.ndarray)
 	conv1_activity = QtCore.pyqtSignal(np.ndarray)
 	conv2_activity = QtCore.pyqtSignal(np.ndarray)
+	conv3_activity = QtCore.pyqtSignal(np.ndarray)
 
 	def __init__(self, rom_path):
 		super(AleCompute, self).__init__()
@@ -174,6 +207,7 @@ class AleCompute(QtCore.QObject):
 
 		self.conv1_activity.emit(activity[0])
 		self.conv2_activity.emit(activity[1])
+		self.conv3_activity.emit(activity[2])
 		self.final_layer_activity.emit(activity[-2])
 
 		finish = time.clock()
@@ -209,15 +243,17 @@ def setup_ale_thread():
 	nl_gi = NeuralLayerGraphicsItem(32, 16, 10)
 	cl_gi1 = ConvLayerGraphicsItem(4, 8, 20, 20, pad=2)
 	cl_gi2 = ConvLayerGraphicsItem(4, 16, 9, 9, pad=2)
+	cl_gi3 = ConvLayerGraphicsItem(4, 16, 7, 7, pad=2)
 
 	compute.moveToThread(thread)
 	compute.frame.connect(ale_gi.show_frame)
 	compute.final_layer_activity.connect(nl_gi.show_activity)
 	compute.conv1_activity.connect(cl_gi1.show_conv_activity)
 	compute.conv2_activity.connect(cl_gi2.show_conv_activity)
+	compute.conv3_activity.connect(cl_gi3.show_conv_activity)
 	thread.started.connect(compute.run)
 
-	return thread, compute, ale_gi, nl_gi, cl_gi1, cl_gi2
+	return thread, compute, ale_gi, nl_gi, cl_gi1, cl_gi2, cl_gi3
 
 
 if __name__ == '__main__':
@@ -227,9 +263,12 @@ if __name__ == '__main__':
 
 	glwidget = QtOpenGL.QGLWidget(QtOpenGL.QGLFormat(QtOpenGL.QGL.SampleBuffers | QtOpenGL.QGL.DirectRendering))
 	view.setViewport(glwidget)
-	view.setViewportUpdateMode(QtGui.QGraphicsView.FullViewportUpdate)
+	# view.setViewportUpdateMode(QtGui.QGraphicsView.FullViewportUpdate)
+	# view.setViewportUpdateMode(QtGui.QGraphicsView.NoViewportUpdate)
 
-	thread, compute, ale_gi, nl_gi, cl_gi1, cl_gi2 = setup_ale_thread()
+
+
+	thread, compute, ale_gi, nl_gi, cl_gi1, cl_gi2, cl_gi3 = setup_ale_thread()
 	scene.addItem(ale_gi)
 
 	scene.addItem(nl_gi)
@@ -239,9 +278,13 @@ if __name__ == '__main__':
 	cl_gi1.setPos(200, 0)
 
 	scene.addItem(cl_gi2)
-	cl_gi2.setPos(250, 250)
+	cl_gi2.setPos(200, 350)
+
+	scene.addItem(cl_gi3)
+	cl_gi3.setPos(200, 520)
 
 	view.show()
 	thread.start()
 
-	sys.exit(app.exec_())
+	code = app.exec_()
+	sys.exit()
