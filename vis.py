@@ -229,8 +229,10 @@ class AleCompute(QtCore.QObject):
 
 
 def setup_ale_thread():
-	thread = QtCore.QThread()
+	thread  = QtCore.QThread()
 	compute = AleCompute(rom_path)
+
+	compute.moveToThread(thread)
 
 	ale_gi = ImageGraphicsItem(ale_screen_width, ale_screen_height)
 	nl_gi  = ImageGraphicsItem(160, 320)
@@ -240,8 +242,6 @@ def setup_ale_thread():
 	cl_gi3 = ConvLayerGraphicsItem(4, 16, 7, 7,   pad=2)
 
 	grid_renderer = GridRenderer(32, 16, zoom=10)
-
-	compute.moveToThread(thread)
 
 	grid_renderer.output.connect(nl_gi.show_image)
 	compute.final_layer_activity.connect(grid_renderer.render)
