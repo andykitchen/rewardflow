@@ -170,6 +170,7 @@ class AleCompute(QtCore.QObject):
 		self.ale = ale_python_interface.ALEInterface()
 		self.ale.loadROM(rom_path)
 		self.actions = self.ale.getMinimalActionSet()
+		self.paused = False
 
 	def run(self):
 		self.timer = QtCore.QTimer()
@@ -190,6 +191,14 @@ class AleCompute(QtCore.QObject):
 
 		self.step()
 
+	def restart(self):
+		self.ale.reset_game()
+
+	def togglePause(self):
+		self.paused = not self.paused
+		if self.paused == False:
+			self.step()
+
 	def step(self):
 		start = time.clock()
 
@@ -205,10 +214,12 @@ class AleCompute(QtCore.QObject):
 		self.final_layer_activity.emit(activity[-2])
 
 		finish = time.clock()
-		elapsed = finish - start
-		target = 1./60
-		delay = target - elapsed if elapsed < target else 0
-		self.timer.start(1000 * delay)
+
+		if not self.paused:
+			elapsed = finish - start
+			target = 1./60
+			delay = target - elapsed if elapsed < target else 0
+			self.timer.start(1000 * delay)
 
 	def step_ale(self, action_index):
 		self.ale.act(self.actions[action_index])
@@ -227,6 +238,19 @@ class AleCompute(QtCore.QObject):
 		state = np.array(self.history).transpose(1, 2, 0)
 		return state
 
+class MainView(QtGui.QGraphicsView):
+	restart = QtCore.pyqtSignal()
+	togglePause = QtCore.pyqtSignal()
+	stepOne = QtCore.pyqtSignal()
+
+	def keyPressEvent(self, event):
+		if event.text() == 'r':
+			self.restart.emit()
+		if event.text() == ' ':
+			self.togglePause.emit()
+		if event.text() == ']':
+			self.stepOne.emit()
+		super(MainView, self).keyPressEvent(event)
 
 def setup_ale_thread():
 	thread  = QtCore.QThread()
@@ -258,12 +282,17 @@ def setup_ale_thread():
 if __name__ == '__main__':
 	app = QtGui.QApplication(sys.argv)
 	scene = QtGui.QGraphicsScene()
-	view = QtGui.QGraphicsView(scene)
+	view = MainView(scene)
 
 	glwidget = QtOpenGL.QGLWidget(QtOpenGL.QGLFormat(QtOpenGL.QGL.SampleBuffers | QtOpenGL.QGL.DirectRendering))
 	view.setViewport(glwidget)
 
 	thread, compute, ale_gi, nl_gi, cl_gi1, cl_gi2, cl_gi3, grid_renderer = setup_ale_thread()
+
+	view.restart.connect(compute.restart)
+	view.togglePause.connect(compute.togglePause)
+	view.stepOne.connect(compute.step)
+
 	scene.addItem(ale_gi)
 
 	scene.addItem(nl_gi)
