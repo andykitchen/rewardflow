@@ -1,5 +1,5 @@
-from PyQt4 import QtCore, QtGui
-from PyQt4 import QtOpenGL
+from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt5 import QtOpenGL
 import sys
 
 sys.path.insert(0, '../upstream/Arcade-Learning-Environment')
@@ -52,7 +52,7 @@ def zoom_int(x, n):
 	return x
 
 
-class ImageGraphicsItem(QtGui.QGraphicsItem):
+class ImageGraphicsItem(QtWidgets.QGraphicsItem):
 	def __init__(self, width=0, height=0):
 		super(ImageGraphicsItem, self).__init__()
 		self.qimage = QtGui.QImage(width, height, QtGui.QImage.Format_RGB32)
@@ -129,7 +129,7 @@ class RenderConvActivityRunnable(QtCore.QRunnable):
 		self.signals.image.emit(activity_image.copy())
 
 
-class ConvLayerGraphicsItem(QtGui.QGraphicsItem):
+class ConvLayerGraphicsItem(QtWidgets.QGraphicsItem):
 	def __init__(self, rows, cols, cell_rows, cell_cols, pad=2):
 		super(ConvLayerGraphicsItem, self).__init__()
 		self.rows = rows
@@ -193,6 +193,7 @@ class AleCompute(QtCore.QObject):
 
 	def restart(self):
 		self.ale.reset_game()
+		self.step()
 
 	def togglePause(self):
 		self.paused = not self.paused
@@ -238,7 +239,7 @@ class AleCompute(QtCore.QObject):
 		state = np.array(self.history).transpose(1, 2, 0)
 		return state
 
-class MainView(QtGui.QGraphicsView):
+class MainView(QtWidgets.QGraphicsView):
 	restart = QtCore.pyqtSignal()
 	togglePause = QtCore.pyqtSignal()
 	stepOne = QtCore.pyqtSignal()
@@ -280,9 +281,11 @@ def setup_ale_thread():
 
 
 if __name__ == '__main__':
-	app = QtGui.QApplication(sys.argv)
-	scene = QtGui.QGraphicsScene()
+	app = QtWidgets.QApplication(sys.argv)
+	scene = QtWidgets.QGraphicsScene()
 	view = MainView(scene)
+
+	view.resize(1024, 768)
 
 	glwidget = QtOpenGL.QGLWidget(QtOpenGL.QGLFormat(QtOpenGL.QGL.SampleBuffers | QtOpenGL.QGL.DirectRendering))
 	view.setViewport(glwidget)
