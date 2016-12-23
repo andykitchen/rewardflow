@@ -6,9 +6,9 @@ sys.path.insert(0, '../upstream/Arcade-Learning-Environment')
 import ale_python_interface
 
 import numpy as np
-import scipy.misc
-import scipy.ndimage
 import tensorflow as tf
+
+# import scipy.misc
 
 import time
 import random
@@ -63,7 +63,7 @@ class ImageGraphicsItem(QtWidgets.QGraphicsItem):
 		painter.drawImage(0, 0, self.qimage)
 
 	def show_image(self, qimage):
-		self.update()
+		# self.update()
 		self.qimage = qimage
 
 
@@ -132,7 +132,7 @@ class ConvLayerGraphicsItem(QtWidgets.QGraphicsItem):
 		painter.drawImage(0, 0, self.activity_image)
 
 	def show_image(self, activity_image):
-		self.update()
+		# self.update()
 		self.activity_image = activity_image
 
 	def show_conv_activity(self, activity_array):
@@ -167,6 +167,7 @@ class AleCompute(QtCore.QObject):
 			self.history.append(np.zeros((84, 84)))
 
 		self.sess = tf.Session()
+
 		with self.sess.as_default():
 			self.model = deepq_loader.AtariNIPSDeepQModel()
 			self.saver = tf.train.Saver()
@@ -296,5 +297,10 @@ if __name__ == '__main__':
 
 	view.show()
 	thread.start()
+
+	timer = QtCore.QTimer()
+	for gi in [ale_gi, nl_gi, cl_gi1, cl_gi2, cl_gi3]:
+		timer.timeout.connect(gi.update)
+	timer.start(1000. / 60)
 
 	sys.exit(app.exec_())
