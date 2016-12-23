@@ -1,5 +1,4 @@
-from PyQt5 import QtCore, QtGui, QtWidgets
-from PyQt5 import QtOpenGL
+from PyQt5 import QtCore, QtGui, QtWidgets, QtOpenGL
 import sys
 
 sys.path.insert(0, '../upstream/Arcade-Learning-Environment')
@@ -113,22 +112,6 @@ def conv_activity_to_qimage(activity_array, rows, cols, pad, pad_value=127):
 class RenderConvActivitySignals(QtCore.QObject):
 	image = QtCore.pyqtSignal(QtGui.QImage)
 
-class RenderConvActivityRunnable(QtCore.QRunnable):
-	def __init__(self, activity_array, rows, cols, pad):
-		super(RenderConvActivityRunnable, self).__init__()
-		self.rows = rows
-		self.cols = cols
-		self.pad = pad
-		self.activity_array = activity_array
-		self.signals = RenderConvActivitySignals()
-
-	def run(self):
-		activity_image = conv_activity_to_qimage(
-			self.activity_array,
-			self.rows, self.cols, self.pad)
-		self.signals.image.emit(activity_image.copy())
-
-
 class ConvLayerGraphicsItem(QtWidgets.QGraphicsItem):
 	def __init__(self, rows, cols, cell_rows, cell_cols, pad=2):
 		super(ConvLayerGraphicsItem, self).__init__()
@@ -153,9 +136,10 @@ class ConvLayerGraphicsItem(QtWidgets.QGraphicsItem):
 		self.activity_image = activity_image
 
 	def show_conv_activity(self, activity_array):
-		runnable = RenderConvActivityRunnable(activity_array, self.rows, self.cols, self.pad)
-		runnable.signals.image.connect(self.show_image)
-		QtCore.QThreadPool.globalInstance().start(runnable)
+		activity_image = conv_activity_to_qimage(
+			activity_array,
+			self.rows, self.cols, self.pad)
+		self.show_image(activity_image)
 
 
 class AleCompute(QtCore.QObject):
@@ -262,9 +246,9 @@ def setup_ale_thread():
 	ale_gi = ImageGraphicsItem(ale_screen_width, ale_screen_height)
 	nl_gi  = ImageGraphicsItem(160, 320)
 
-	cl_gi1 = ConvLayerGraphicsItem(4, 8,  20, 20, pad=2)
-	cl_gi2 = ConvLayerGraphicsItem(4, 16, 9, 9,   pad=2)
-	cl_gi3 = ConvLayerGraphicsItem(4, 16, 7, 7,   pad=2)
+	cl_gi1 = ConvLayerGraphicsItem(4,  8, 20, 20, pad=2)
+	cl_gi2 = ConvLayerGraphicsItem(4, 16,  9,  9, pad=2)
+	cl_gi3 = ConvLayerGraphicsItem(4, 16,  7,  7, pad=2)
 
 	grid_renderer = GridRenderer(32, 16, zoom=10)
 
